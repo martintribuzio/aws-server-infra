@@ -1,0 +1,176 @@
+Parameters:
+  AMIId:
+    Type: String
+    Description: "El ID de la AMI para la instancia EC2."
+    Default: ami-0c55b159cbfafe01e
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: "El tipo de instancia EC2 a lanzar."
+
+Resources:
+  DevVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: dev-vpc
+
+  DBSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVPC
+      CidrBlock: 10.16.16.0/20
+      AvailabilityZone: !Sub ${AWS::Region}a
+      Tags:
+        - Key: Name
+          Value: sn-db-a
+        - Key: env
+          Value: dev
+
+  ServerSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVPC
+      CidrBlock: 10.16.32.0/20
+      AvailabilityZone: !Sub ${AWS::Region}a
+      Tags:
+        - Key: Name
+          Value: sn-server-a
+        - Key: env
+          Value: dev
+
+  WebSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DevVPC
+      CidrBlock: 10.16.48.0/20
+      AvailabilityZone: !Sub ${AWS::Region}a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sn-web-a
+        - Key: env
+          Value: dev
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: igw-dev
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DevVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  WebRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DevVPC
+      Tags:
+        - Key: Name
+          Value: rt-web-public-dev
+
+  WebPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref WebRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  
+  ServerRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DevVPC
+      Tags:
+        - Key: Name
+          Value: rt-server-private-dev
+
+  ServerNATRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ServerRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayA
+
+  ServerSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ServerSubnetA
+      RouteTableId: !Ref ServerRouteTable
+
+  WebSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebSubnetA
+      RouteTableId: !Ref WebRouteTable
+
+  NatGatewayEIPA:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: nat-eip-1
+        - Key: env
+          Value: dev
+
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIPA.AllocationId
+      SubnetId: !Ref WebSubnetA
+      Tags:
+        - Key: Name
+          Value: nat-gateway-1
+        - Key: env
+          Value: dev
+  
+  DevServerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  DevServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref DevServerInstanceRole
+
+  DevServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for dev server instances
+      VpcId: !Ref DevVPC
+
+  EC2ServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref AMIId
+      SubnetId: !Ref ServerSubnetA
+      KeyName: mt
+      SecurityGroupIds:
+        - !Ref DevServerSecurityGroup
+      IamInstanceProfile: !Ref DevServerInstanceProfile
+      Tags:
+        - Key: Name
+          Value: server-1
+        - Key: env
+          Value: dev
